@@ -84,7 +84,7 @@ const FLOW_STEPS: Record<
   ],
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_ORCH_URL ?? "http://127.0.0.1:8002";
+const API_BASE = process.env.NEXT_PUBLIC_ORCH_URL ?? "http://222.18.158.11:8002";
 
 const todayKey = () => {
   return new Date().toISOString().slice(0, 10);
@@ -117,6 +117,7 @@ export default function Home() {
   >([]);
   const [intentSummary, setIntentSummary] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [showAnchors, setShowAnchors] = useState(false);
   const [selectedFlow, setSelectedFlow] = useState("");
   const [anchorPhrase, setAnchorPhrase] = useState("");
   const [anchorDifficulty, setAnchorDifficulty] = useState("");
@@ -164,9 +165,15 @@ export default function Home() {
 
   type ReviewMessage = { role: "agent" | "user"; text: string };
   const [reviewMessages, setReviewMessages] = useState<ReviewMessage[]>([]);
+  const reviewMessagesRef = useRef<ReviewMessage[]>([]);
+  useEffect(() => {
+    reviewMessagesRef.current = reviewMessages;
+  }, [reviewMessages]);
+
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState("");
   const [reviewAttempt, setReviewAttempt] = useState(1);
+  const [patienceLevel, setPatienceLevel] = useState<"low" | "medium" | "high">("medium");
   const [selectedModel, setSelectedModel] = useState<string>("deepseek-chat");
   const reviewRecorderRef = useRef<MediaRecorder | null>(null);
   const reviewChunksRef = useRef<Blob[]>([]);
@@ -655,18 +662,31 @@ export default function Home() {
     }
   };
 
+  const endReviewDialog = () => {
+    setReviewMessages([]);
+    setReviewError("");
+    setReviewTextReply("");
+    setReviewAttempt(1);
+    if (reviewRecording) {
+      stopReviewRecording();
+    }
+  };
+
   const startReviewConversation = async () => {
     setReviewError("");
     setReviewMessages([]);
     setReviewAttempt(1);
     setReviewTextReply("");
+    if (reviewRecording) {
+      stopReviewRecording();
+    }
     setReviewLoading(true);
     try {
       const res = await fetch(`${API_BASE}/review/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          theme: themeInput.trim() || todayTheme || "general topic",
+          theme: todayTheme || themeInput.trim() || "general topic",
           difficulty: anchorDifficulty || "medium",
           language: themeLanguage,
           model: selectedModel,
@@ -694,7 +714,8 @@ export default function Home() {
   };
 
   const sendReviewTurn = async (replyOverride?: string) => {
-    if (!reviewMessages.length) {
+    const currentMessages = reviewMessagesRef.current;
+    if (!currentMessages.length) {
       setReviewError("Start the dialog first.");
       return;
     }
@@ -703,11 +724,11 @@ export default function Home() {
       setReviewError("Provide a reply first.");
       return;
     }
-    console.log("reviewMessages before /review/turn:", reviewMessages);
+    console.log("reviewMessages before /review/turn:", currentMessages);
     setReviewError("");
     setReviewLoading(true);
     try {
-      const history = reviewMessages
+      const history = currentMessages
         .filter((m) => m.role === "agent" || m.role === "user")
         .map((m) => ({
           role: m.role,
@@ -724,6 +745,7 @@ export default function Home() {
           user_reply: replyText,
           attempt: reviewAttempt,
           model: selectedModel,
+          patience: patienceLevel,
         }),
       });
       if (!res.ok) throw new Error(`Review turn failed: ${res.status}`);
@@ -809,28 +831,222 @@ export default function Home() {
           </p>
         </div>
         <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-          <span className="text-xs font-semibold uppercase text-slate-500">Model</span>
-          <select
-            value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value)}
-            className="rounded-md border border-slate-300 px-2 py-1 text-sm"
-          >
-            <option value="deepseek-chat">deepseek-chat (default)</option>
-            <option value="ollama">ollama</option>
-          </select>
           <span role="img" aria-label="settings">
             ⚙️
           </span>
         </div>
       </header>
-      <main className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8">
+      <main className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-6 py-8">
         <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold">1. Today&apos;s theme &amp; phrase cards</h2>
-          <p className="text-sm text-slate-500">
-            Resolve a learner intent (inputs can be English or Chinese) to generate phrase cards.
-          </p>
-          <div className="mt-2 flex flex-col gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-700">
-            <div>{todayTheme || "No theme set today"}</div>
+          <details className="group">
+            <summary className="flex cursor-pointer items-center justify-between text-xl font-semibold marker:content-none">
+              <span>Settings &amp; Tools</span>
+              <span className="text-slate-400 transition group-open:rotate-180">
+                ▼
+              </span>
+            </summary>
+            <p className="mt-1 text-sm text-slate-500">
+              Global settings, microphone controls, and session tools.
+            </p>
+
+            <div className="mt-4 flex flex-col gap-6">
+              {/* Model Selection */}
+              <div className="flex items-center gap-4 rounded-lg bg-slate-50 p-4">
+                <span className="text-sm font-medium text-slate-700">Model Selection:</span>
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="deepseek-chat">deepseek-chat (default)</option>
+                  <option value="ollama">ollama</option>
+                </select>
+              </div>
+
+              {/* Mic & Streaming */}
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
+                  <p className="font-medium text-slate-700">Mic Capture</p>
+                  <p className="mb-2">
+                    {recording
+                      ? "Recording... tap stop to send audio to /transcribe."
+                      : "Start recording to capture a WebM blob and send once."}
+                  </p>
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (recording) {
+                          stopStreaming();
+                        } else {
+                          startStreaming();
+                        }
+                      }}
+                      className={`rounded-md px-4 py-2 text-sm font-medium text-white ${recording ? "bg-red-500" : "bg-green-600"
+                        }`}
+                    >
+                      {recording ? "Stop" : "Start"}
+                    </button>
+                  </div>
+                  {micError && <p className="mt-2 text-xs text-red-600">{micError}</p>}
+                </div>
+                <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
+                  <p className="font-medium text-slate-700">Playback</p>
+                  <p className="mb-2">Request TTS and play the queue.</p>
+                  <div className="flex flex-col gap-2 md:flex-row">
+                    <input
+                      value={ttsText}
+                      onChange={(e) => setTtsText(e.target.value)}
+                      className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleTtsPlay}
+                      className="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white"
+                    >
+                      Play TTS
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500">
+                    Queue: {audioQueue.length} | {isPlaying ? "Playing" : "Idle"}
+                  </p>
+                  {transcription && (
+                    <p className="mt-2 text-sm text-slate-700">
+                      Latest transcript: {transcription}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Session Chat */}
+              <div className="rounded-lg border border-slate-200 p-4">
+                <p className="font-medium text-slate-700">Session Chat</p>
+                <div className="mt-3 flex flex-col gap-3 md:flex-row">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(`${API_BASE}/sessions`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ mode: "fluency" }),
+                        });
+                        if (!res.ok) throw new Error(`Session failed: ${res.status}`);
+                        const data = await res.json();
+                        setSessionId(data.session_id);
+                        setChatResponse(`Session created: ${data.session_id}`);
+                      } catch (err: any) {
+                        setChatResponse(err?.message ?? "Session create failed.");
+                      }
+                    }}
+                    className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white"
+                  >
+                    New session
+                  </button>
+                  <input
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Ask a question..."
+                    className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  />
+                  <button
+                    type="button"
+                    disabled={!sessionId}
+                    onClick={async () => {
+                      if (!sessionId) {
+                        setChatResponse("Create a session first.");
+                        return;
+                      }
+                      try {
+                        const res = await fetch(
+                          `${API_BASE}/sessions/${sessionId}/chat`,
+                          {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ prompt: chatInput }),
+                          }
+                        );
+                        if (!res.ok) throw new Error(`Chat failed: ${res.status}`);
+                        const data = await res.json();
+                        setChatResponse(data.response ?? "");
+                      } catch (err: any) {
+                        setChatResponse(err?.message ?? "Chat failed.");
+                      }
+                    }}
+                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    Send
+                  </button>
+                </div>
+                {chatResponse && (
+                  <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-4 text-sm text-slate-700">
+                    {chatResponse}
+                  </div>
+                )}
+              </div>
+
+              {/* Feedback */}
+              <div className="rounded-lg border border-slate-200 p-4">
+                <p className="font-medium text-slate-700">Feedback Tool</p>
+                <textarea
+                  value={feedbackInput}
+                  onChange={(e) => setFeedbackInput(e.target.value)}
+                  placeholder="Paste transcript here..."
+                  className="mt-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  rows={2}
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const res = await fetch(`${API_BASE}/feedback`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          transcript: feedbackInput,
+                          segments: [],
+                          target_language: themeLanguage,
+                        }),
+                      });
+                      if (!res.ok) throw new Error(`Feedback failed: ${res.status}`);
+                      const data = await res.json();
+                      setFeedback(data);
+                    } catch (err: any) {
+                      setErrorMessage(err?.message ?? "Feedback failed.");
+                    }
+                  }}
+                  className="mt-3 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white"
+                >
+                  Get feedback
+                </button>
+                {feedback && (
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <div className="rounded-lg border border-slate-200 p-4 text-sm">
+                      <p className="font-medium text-slate-800">Grammar</p>
+                      <ul className="mt-1 list-disc pl-4 text-slate-600">
+                        {feedback.grammar_notes.map((n, i) => (
+                          <li key={i}>{n}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 p-4 text-sm">
+                      <p className="font-medium text-slate-800">Prosody</p>
+                      <ul className="mt-1 list-disc pl-4 text-slate-600">
+                        {feedback.prosody_notes.map((n, i) => (
+                          <li key={i}>{n}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </details>
+        </section>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-col justify-between gap-2 md:flex-row md:items-center">
+            <h2 className="text-lg font-semibold">Today&apos;s theme</h2>
             {anchorPhrase && (
               <div className="flex items-center gap-2 text-xs text-slate-600">
                 <span className="rounded bg-slate-200 px-2 py-1 font-semibold text-slate-700">
@@ -868,6 +1084,13 @@ export default function Home() {
             >
               {themeLoading ? "Resolving..." : "Resolve"}
             </button>
+            <button
+              type="button"
+              onClick={() => setShowAnchors(!showAnchors)}
+              className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              {showAnchors ? "Hide Anchors" : "Show Anchors"}
+            </button>
           </div>
           {errorMessage && (
             <p className="mt-2 text-sm text-red-600">{errorMessage}</p>
@@ -877,7 +1100,7 @@ export default function Home() {
               {intentSummary}
             </div>
           )}
-          {phraseCards.length > 0 && (
+          {phraseCards.length > 0 && showAnchors && (
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               {phraseCards.map((card, idx) => (
                 <button
@@ -889,11 +1112,10 @@ export default function Home() {
                     localStorage.setItem("anchorPhrase", card.phrase);
                     localStorage.setItem("anchorDifficulty", card.difficulty || "");
                   }}
-                  className={`rounded-lg border p-4 text-left transition ${
-                    anchorPhrase === card.phrase
-                      ? "border-blue-500 bg-blue-50"
-                      : "border-slate-200 bg-white hover:border-blue-200"
-                  }`}
+                  className={`rounded-lg border p-4 text-left transition ${anchorPhrase === card.phrase
+                    ? "border-blue-500 bg-blue-50"
+                    : "border-slate-200 bg-white hover:border-blue-200"
+                    }`}
                 >
                   <div className="flex items-center justify-between">
                     <p className="font-medium">{card.phrase}</p>
@@ -920,17 +1142,13 @@ export default function Home() {
           )}
         </section>
 
-        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold">2. Choose a module</h2>
-          <p className="text-sm text-slate-500">
-            Modules drive the prompt templates and VAD pacing.
-          </p>
-          {anchorPhrase && (
-            <p className="mt-1 text-xs text-slate-600">
-              Current anchor: {anchorPhrase} {anchorDifficulty && `(${anchorDifficulty})`}
-            </p>
-          )}
-          <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Gym & Flow</h2>
+          </div>
+
+          {/* Gym Selection */}
+          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
             {(Object.keys(MODULES) as ModuleKey[]).map((key) => (
               <button
                 key={key}
@@ -939,663 +1157,493 @@ export default function Home() {
                   setActiveModule(key);
                   setSelectedFlow("");
                 }}
-                className={`rounded-lg border p-4 text-left transition ${
-                  activeModule === key
-                    ? "border-blue-500 bg-blue-50"
-                    : "border-slate-200 bg-white hover:border-blue-200"
-                }`}
+                className={`flex flex-col items-start rounded-md border px-4 py-3 text-sm transition ${activeModule === key
+                  ? "border-blue-500 bg-blue-600 text-white"
+                  : "border-slate-200 bg-white text-slate-700 hover:border-blue-300"
+                  }`}
               >
-                <div className="font-medium capitalize">{key}</div>
-                <div className="text-sm text-slate-500">{MODULES[key]}</div>
+                <span className="font-bold capitalize">{key}</span>
+                <span className={`text-xs ${activeModule === key ? "text-blue-100" : "text-slate-500"}`}>
+                  {MODULES[key]}
+                </span>
               </button>
             ))}
           </div>
-          <p className="mt-4 text-sm text-slate-600">{moduleDescription}</p>
-        </section>
 
-        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold">3. Flow guide</h2>
-          <p className="text-sm text-slate-500">
-            Sub-steps and tips follow the module selection above. Click a card to pick the current drill.
-          </p>
-          <div className="mt-4 grid gap-3 md:grid-cols-3">
-            {FLOW_STEPS[activeModule].map((step) => (
-              <button
-                key={step.title}
-                type="button"
-                onClick={async () => {
-                  setSelectedFlow(step.title);
-                  if (step.title.toLowerCase() === "shadow") {
-                    await fetchShadowSentence();
-                  } else if (step.title.toLowerCase() === "substitution") {
-                    await fetchSubstitutionSet();
-                  } else if (step.title.toLowerCase() === "expansion") {
-                    await fetchExpansionSet();
-                  } else {
-                    setChatInput(step.cta);
-                  }
-                }}
-                className={`rounded-lg border p-4 text-left text-sm transition ${
-                  selectedFlow === step.title
-                    ? "border-blue-500 bg-blue-50"
-                    : "border-slate-200 bg-white hover:border-blue-200"
-                }`}
-              >
-                <p className="text-base font-semibold text-slate-800">
-                  {step.title}
-                </p>
-                <ul className="mt-2 list-disc pl-4 text-slate-600">
-                  {step.bullets.map((b, i) => (
-                    <li key={`${step.title}-${i}`}>{b}</li>
-                  ))}
-                </ul>
-                <div className="mt-3 rounded-md border border-blue-200 px-3 py-2 text-xs font-medium text-blue-700">
-                  {selectedFlow === step.title ? "Selected" : "Select / use prompt"}
-                </div>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        {activeModule === "reflex" && (
-          <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-xl font-semibold">4. Shadow practice</h2>
-            <p className="text-sm text-slate-500">
-              Get a sentence → listen → shadow → ASR → feedback (also spoken).
-            </p>
-            <div className="mt-4 flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={fetchShadowSentence}
-                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                disabled={shadowStartLoading}
-              >
-                {shadowStartLoading ? "Loading..." : "New sentence"}
-              </button>
-              <button
-                type="button"
-                onClick={() => playText(shadowSentence)}
-                className="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                disabled={!shadowSentence}
-              >
-                Play reference
-              </button>
-              <button
-                type="button"
-                onClick={() => setShadowHidden((prev) => !prev)}
-                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
-                disabled={!shadowSentence}
-              >
-                {shadowHidden ? "Show text" : "Hide text"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (shadowRecording) stopShadowRecording();
-                  else recordShadow();
-                }}
-                className={`rounded-md px-4 py-2 text-sm font-medium text-white ${
-                  shadowRecording ? "bg-red-600" : "bg-green-600"
-                }`}
-                disabled={shadowStartLoading}
-              >
-                {shadowRecording ? "Stop & transcribe" : "Record & shadow"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  stopAudio();
-                  playText(stripMarkdown(shadowFeedback));
-                }}
-                className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                disabled={!shadowFeedback}
-              >
-                Play feedback
-              </button>
-              <button
-                type="button"
-                onClick={stopAudio}
-                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-50"
-                disabled={!shadowFeedback && audioQueue.length === 0 && !isPlaying}
-              >
-                Stop playback
-              </button>
-            </div>
-
-            <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-              <p className="text-xs uppercase text-slate-500">Reference</p>
-              {shadowCue && <p className="text-xs text-slate-500">Cue: {shadowCue}</p>}
-              <p className={`mt-1 text-base font-medium ${shadowHidden ? "blur-sm" : ""}`}>
-                {shadowSentence || "Click New sentence to start shadowing"}
-              </p>
-            </div>
-
-            {shadowTranscript && (
-              <div className="mt-3 rounded-lg border border-slate-200 p-4 text-sm">
-                <p className="text-xs uppercase text-slate-500">Your transcript</p>
-                <p className="mt-1 font-medium text-slate-800">{shadowTranscript}</p>
-              </div>
-            )}
-
-            {shadowFeedback && (
-              <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm">
-                <p className="text-xs uppercase text-emerald-600">Agent feedback</p>
-                <p className="mt-1 text-emerald-900">{shadowFeedback}</p>
-              </div>
-            )}
-
-            {shadowError && (
-              <p className="mt-2 text-sm text-red-600">{shadowError}</p>
-            )}
-          </section>
-        )}
-
-        {activeModule === "reflex" && (
-          <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-xl font-semibold">5. Substitution practice</h2>
-            <p className="text-sm text-slate-500">
-              Coffee-shop scene: swap key words to make variants while keeping tense and politeness.
-            </p>
-            <div className="mt-4 flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={fetchSubstitutionSet}
-                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                disabled={subsLoading}
-              >
-                {subsLoading ? "Loading..." : "New set"}
-              </button>
-              <button
-                type="button"
-                onClick={() => playText(subsBase)}
-                className="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                disabled={!subsBase}
-              >
-                Play base
-              </button>
-              <button
-                type="button"
-                onClick={() => setSubsHidden((prev) => !prev)}
-                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
-                disabled={!subsBase}
-              >
-                {subsHidden ? "Show text" : "Hide text"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (subsRecording) stopSubsRecording();
-                  else recordSubstitution();
-                }}
-                className={`rounded-md px-4 py-2 text-sm font-medium text-white ${
-                  subsRecording ? "bg-red-600" : "bg-green-600"
-                }`}
-                disabled={subsLoading}
-              >
-                {subsRecording ? "Stop & transcribe" : "Record variant"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  stopAudio();
-                  playText(stripMarkdown(subsFeedback));
-                }}
-                className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                disabled={!subsFeedback}
-              >
-                Play feedback
-              </button>
-              <button
-                type="button"
-                onClick={stopAudio}
-                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-50"
-                disabled={!subsFeedback && audioQueue.length === 0 && !isPlaying}
-              >
-                Stop playback
-              </button>
-            </div>
-
-            <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-              <p className="text-xs uppercase text-slate-500">Base sentence</p>
-              <p className={`mt-1 text-base font-medium ${subsHidden ? "blur-sm" : ""}`}>
-                {subsBase || "Click New set to get a sentence"}
-              </p>
-            </div>
-
-            {subsSlots.length > 0 && (
-              <div className="mt-3 rounded-lg border border-slate-200 p-4 text-sm">
-                <p className="text-xs uppercase text-slate-500">Slots</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {subsSlots.map((slot) => (
-                    <div
-                      key={slot.label}
-                      className="rounded-lg border border-slate-200 px-3 py-2"
-                    >
-                      <p className="text-xs uppercase text-slate-500">
-                        {slot.label}
-                      </p>
-                      <p className="text-sm text-slate-800">
-                        {slot.options?.join(" / ")}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {subsTranscript && (
-              <div className="mt-3 rounded-lg border border-slate-200 p-4 text-sm">
-                <p className="text-xs uppercase text-slate-500">Your transcript</p>
-                <p className="mt-1 font-medium text-slate-800">{subsTranscript}</p>
-              </div>
-            )}
-
-            {subsFeedback && (
-              <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm">
-                <p className="text-xs uppercase text-emerald-600">Agent feedback</p>
-                <p className="mt-1 text-emerald-900">{subsFeedback}</p>
-              </div>
-            )}
-
-            {subsError && <p className="mt-2 text-sm text-red-600">{subsError}</p>}
-          </section>
-        )}
-
-        {activeModule === "reflex" && (
-          <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-xl font-semibold">6. Expansion practice</h2>
-            <p className="text-sm text-slate-500">
-              Grow the idea with connectors and detail. Use the scaffolds as cues.
-            </p>
-            <div className="mt-4 flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={fetchExpansionSet}
-                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                disabled={expLoading}
-              >
-                {expLoading ? "Loading..." : "New seed"}
-              </button>
-              <button
-                type="button"
-                onClick={() => playText(expSeed)}
-                className="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                disabled={!expSeed}
-              >
-                Play seed
-              </button>
-              <button
-                type="button"
-                onClick={() => setExpHidden((prev) => !prev)}
-                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
-                disabled={!expSeed}
-              >
-                {expHidden ? "Show text" : "Hide text"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (expRecording) stopExpRecording();
-                  else recordExpansion();
-                }}
-                className={`rounded-md px-4 py-2 text-sm font-medium text-white ${
-                  expRecording ? "bg-red-600" : "bg-green-600"
-                }`}
-                disabled={expLoading}
-              >
-                {expRecording ? "Stop & transcribe" : "Record expansion"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  stopAudio();
-                  playText(stripMarkdown(expFeedback));
-                }}
-                className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                disabled={!expFeedback}
-              >
-                Play feedback
-              </button>
-              <button
-                type="button"
-                onClick={stopAudio}
-                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-50"
-                disabled={!expFeedback && audioQueue.length === 0 && !isPlaying}
-              >
-                Stop playback
-              </button>
-            </div>
-
-            <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-              <p className="text-xs uppercase text-slate-500">Seed</p>
-              <p className={`mt-1 text-base font-medium ${expHidden ? "blur-sm" : ""}`}>
-                {expSeed || "Click New seed to start expansion drills"}
-              </p>
-            </div>
-
-            {expScaffolds.length > 0 && (
-              <div className="mt-3 rounded-lg border border-slate-200 p-4 text-sm">
-                <p className="text-xs uppercase text-slate-500">Scaffolds</p>
-                <ul className="mt-2 list-disc pl-4 text-slate-700">
-                  {expScaffolds.map((s, i) => (
-                    <li key={`scaf-${i}`}>{s}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {expTranscript && (
-              <div className="mt-3 rounded-lg border border-slate-200 p-4 text-sm">
-                <p className="text-xs uppercase text-slate-500">Your transcript</p>
-                <p className="mt-1 font-medium text-slate-800">{expTranscript}</p>
-              </div>
-            )}
-
-            {expFeedback && (
-              <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm">
-                <p className="text-xs uppercase text-emerald-600">Agent feedback</p>
-                <p className="mt-1 text-emerald-900">{expFeedback}</p>
-              </div>
-            )}
-
-            {expError && <p className="mt-2 text-sm text-red-600">{expError}</p>}
-          </section>
-        )}
-
-        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold">7. Deep Dive · Review dialog</h2>
-          <p className="text-sm text-slate-500">
-            Agent opens, you respond (voice-first); Agent points one concrete error (word/tense/grammar/naturalness) if any, you correct; otherwise it continues. Conversation stays in English and shows roles plus corrections.
-          </p>
-          <div className="mt-2 flex flex-wrap gap-3 text-sm">
-            <label className="flex items-center gap-2 text-slate-700">
-              Model
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="rounded-md border border-slate-300 px-2 py-1 text-sm"
-              >
-                <option value="deepseek-chat">deepseek-chat (default)</option>
-                <option value="ollama">ollama</option>
-              </select>
-            </label>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={startReviewConversation}
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-              disabled={reviewLoading}
-            >
-              {reviewLoading ? "Loading..." : "Start dialog"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (reviewRecording) {
-                  stopReviewRecording();
-                } else {
-                  recordReviewReply();
-                }
-              }}
-              className={`rounded-md px-4 py-2 text-sm font-medium text-white ${
-                reviewRecording ? "bg-red-600" : "bg-emerald-600"
-              }`}
-              disabled={reviewLoading}
-            >
-              {reviewRecording ? "Stop & send" : "Record reply"}
-            </button>
-          </div>
-          <div className="mt-4 flex w-full flex-col gap-3">
-            <div className="flex flex-col gap-3 md:flex-row">
-              <input
-                value={reviewTextReply}
-                onChange={(e) => setReviewTextReply(e.target.value)}
-                placeholder="Type your reply here..."
-                className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
-                disabled={reviewLoading || !reviewMessages.length}
-              />
-              <button
-                type="button"
-                onClick={() => sendReviewTurn(reviewTextReply)}
-                className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                disabled={
-                  reviewLoading || !reviewMessages.length || !reviewTextReply.trim()
-                }
-              >
-                Send text
-              </button>
-            </div>
-            <label className="flex items-center gap-2 text-sm text-slate-600">
-              <input
-                type="checkbox"
-                checked={autoPlayReviewReply}
-                onChange={(e) => setAutoPlayReviewReply(e.target.checked)}
-              />
-              Auto-play agent replies
-            </label>
-          </div>
-
-          <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800">
-            <p className="text-xs uppercase text-slate-500">Transcript</p>
-            <div className="mt-2 flex min-h-[120px] flex-col gap-1">
-              {reviewMessages.length === 0 && (
-                <p className="text-slate-500">Click Start dialog to begin.</p>
-              )}
-              {reviewMessages.map((m, idx) => (
-                <div key={`rev-${idx}`} className="leading-relaxed">
-                  <span className="font-semibold text-slate-700">
-                    {m.role === "agent" ? "Agent" : "User"}:
-                  </span>{" "}
-                  {m.text}
-                </div>
+          {/* Flow Guide integrated */}
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              {FLOW_STEPS[activeModule].map((step) => (
+                <button
+                  key={step.title}
+                  type="button"
+                  onClick={async () => {
+                    setSelectedFlow(step.title);
+                    if (step.title.toLowerCase() === "shadow") {
+                      await fetchShadowSentence();
+                    } else if (step.title.toLowerCase() === "substitution") {
+                      await fetchSubstitutionSet();
+                    } else if (step.title.toLowerCase() === "expansion") {
+                      await fetchExpansionSet();
+                    } else {
+                      setChatInput(step.cta);
+                    }
+                  }}
+                  className={`flex flex-col items-start rounded-md border px-4 py-3 text-sm transition ${selectedFlow === step.title
+                    ? "border-blue-500 bg-blue-100 text-blue-900"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-blue-300"
+                    }`}
+                >
+                  <span className="font-bold">{step.title}</span>
+                  <span className="text-xs text-slate-500 text-left">
+                    {step.bullets[0]}
+                  </span>
+                </button>
               ))}
             </div>
-            {reviewError && <p className="mt-2 text-sm text-red-600">{reviewError}</p>}
           </div>
         </section>
 
-        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold">8. Mic &amp; streaming hooks</h2>
-          <p className="text-sm text-slate-500">
-            Browser-side capture and streaming to ASR/TTS will land here.
-          </p>
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
-              <p className="font-medium text-slate-700">Mic Capture</p>
-              <p className="mb-2">
-                {recording
-                  ? "Recording... tap stop to send audio to /transcribe."
-                  : "Start recording to capture a WebM blob and send once."}
+        {
+          activeModule === "reflex" && selectedFlow === "Shadow" && (
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-xl font-semibold">Shadow practice</h2>
+              <p className="text-sm text-slate-500">
+                Get a sentence → listen → shadow → ASR → feedback (also spoken).
               </p>
-              <div className="flex gap-3">
+              <div className="mt-4 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={fetchShadowSentence}
+                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  disabled={shadowStartLoading}
+                >
+                  {shadowStartLoading ? "Loading..." : "New sentence"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => playText(shadowSentence)}
+                  className="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  disabled={!shadowSentence}
+                >
+                  Play reference
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShadowHidden((prev) => !prev)}
+                  className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+                  disabled={!shadowSentence}
+                >
+                  {shadowHidden ? "Show text" : "Hide text"}
+                </button>
                 <button
                   type="button"
                   onClick={() => {
-                    if (recording) {
-                      stopStreaming();
-                    } else {
-                      startStreaming();
-                    }
+                    if (shadowRecording) stopShadowRecording();
+                    else recordShadow();
                   }}
-                  className={`rounded-md px-4 py-2 text-sm font-medium text-white ${
-                    recording ? "bg-red-500" : "bg-green-600"
-                  }`}
+                  className={`rounded-md px-4 py-2 text-sm font-medium text-white ${shadowRecording ? "bg-red-600" : "bg-green-600"
+                    }`}
+                  disabled={shadowStartLoading}
                 >
-                  {recording ? "Stop" : "Start"}
+                  {shadowRecording ? "Stop & transcribe" : "Record & shadow"}
                 </button>
-              </div>
-              {micError && <p className="mt-2 text-xs text-red-600">{micError}</p>}
-            </div>
-            <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
-              <p className="font-medium text-slate-700">Playback</p>
-              <p className="mb-2">Request TTS and play the queue.</p>
-              <div className="flex flex-col gap-2 md:flex-row">
-                <input
-                  value={ttsText}
-                  onChange={(e) => setTtsText(e.target.value)}
-                  className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
-                />
                 <button
                   type="button"
-                  onClick={handleTtsPlay}
-                  className="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white"
+                  onClick={() => {
+                    stopAudio();
+                    playText(stripMarkdown(shadowFeedback));
+                  }}
+                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  disabled={!shadowFeedback}
                 >
-                  Play TTS
+                  Play feedback
+                </button>
+                <button
+                  type="button"
+                  onClick={stopAudio}
+                  className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-50"
+                  disabled={!shadowFeedback && audioQueue.length === 0 && !isPlaying}
+                >
+                  Stop playback
                 </button>
               </div>
-              <p className="mt-2 text-xs text-slate-500">
-                Queue: {audioQueue.length} | {isPlaying ? "Playing" : "Idle"}
-              </p>
-              {transcription && (
-                <p className="mt-2 text-sm text-slate-700">
-                  Latest transcript: {transcription}
+
+              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                <p className="text-xs uppercase text-slate-500">Reference</p>
+                {shadowCue && <p className="text-xs text-slate-500">Cue: {shadowCue}</p>}
+                <p className={`mt-1 text-base font-medium ${shadowHidden ? "blur-sm" : ""}`}>
+                  {shadowSentence || "Click New sentence to start shadowing"}
                 </p>
+              </div>
+
+              {shadowTranscript && (
+                <div className="mt-3 rounded-lg border border-slate-200 p-4 text-sm">
+                  <p className="text-xs uppercase text-slate-500">Your transcript</p>
+                  <p className="mt-1 font-medium text-slate-800">{shadowTranscript}</p>
+                </div>
               )}
-            </div>
-          </div>
-        </section>
 
-        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold">9. Session chat</h2>
-          <p className="text-sm text-slate-500">
-            Create a session and chat with the orchestrator (mode-aware).
-          </p>
-          <div className="mt-3 flex flex-col gap-3 md:flex-row">
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const res = await fetch(`${API_BASE}/sessions`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ mode: "fluency" }),
-                  });
-                  if (!res.ok) throw new Error(`Session failed: ${res.status}`);
-                  const data = await res.json();
-                  setSessionId(data.session_id);
-                  setChatResponse(`Session created: ${data.session_id}`);
-                } catch (err: any) {
-                  setChatResponse(err?.message ?? "Session create failed.");
-                }
-              }}
-              className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white"
-            >
-              New session
-            </button>
-            <input
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              placeholder="Ask a question..."
-              className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-            <button
-              type="button"
-              disabled={!sessionId}
-              onClick={async () => {
-                if (!sessionId) {
-                  setChatResponse("Create a session first.");
-                  return;
-                }
-                try {
-                  const res = await fetch(
-                    `${API_BASE}/sessions/${sessionId}/chat`,
-                    {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ prompt: chatInput }),
+              {shadowFeedback && (
+                <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm">
+                  <p className="text-xs uppercase text-emerald-600">Agent feedback</p>
+                  <p className="mt-1 text-emerald-900">{shadowFeedback}</p>
+                </div>
+              )}
+
+              {shadowError && (
+                <p className="mt-2 text-sm text-red-600">{shadowError}</p>
+              )}
+            </section>
+          )
+        }
+
+        {
+          activeModule === "reflex" && selectedFlow === "Substitution" && (
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-xl font-semibold">Substitution practice</h2>
+              <p className="text-sm text-slate-500">
+                Coffee-shop scene: swap key words to make variants while keeping tense and politeness.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={fetchSubstitutionSet}
+                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  disabled={subsLoading}
+                >
+                  {subsLoading ? "Loading..." : "New set"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => playText(subsBase)}
+                  className="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  disabled={!subsBase}
+                >
+                  Play base
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSubsHidden((prev) => !prev)}
+                  className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+                  disabled={!subsBase}
+                >
+                  {subsHidden ? "Show text" : "Hide text"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (subsRecording) stopSubsRecording();
+                    else recordSubstitution();
+                  }}
+                  className={`rounded-md px-4 py-2 text-sm font-medium text-white ${subsRecording ? "bg-red-600" : "bg-green-600"
+                    }`}
+                  disabled={subsLoading}
+                >
+                  {subsRecording ? "Stop & transcribe" : "Record variant"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    stopAudio();
+                    playText(stripMarkdown(subsFeedback));
+                  }}
+                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  disabled={!subsFeedback}
+                >
+                  Play feedback
+                </button>
+                <button
+                  type="button"
+                  onClick={stopAudio}
+                  className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-50"
+                  disabled={!subsFeedback && audioQueue.length === 0 && !isPlaying}
+                >
+                  Stop playback
+                </button>
+              </div>
+
+              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                <p className="text-xs uppercase text-slate-500">Base sentence</p>
+                <p className={`mt-1 text-base font-medium ${subsHidden ? "blur-sm" : ""}`}>
+                  {subsBase || "Click New set to get a sentence"}
+                </p>
+              </div>
+
+              {subsSlots.length > 0 && (
+                <div className="mt-3 rounded-lg border border-slate-200 p-4 text-sm">
+                  <p className="text-xs uppercase text-slate-500">Slots</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {subsSlots.map((slot) => (
+                      <div
+                        key={slot.label}
+                        className="rounded-lg border border-slate-200 px-3 py-2"
+                      >
+                        <p className="text-xs uppercase text-slate-500">
+                          {slot.label}
+                        </p>
+                        <p className="text-sm text-slate-800">
+                          {slot.options?.join(" / ")}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {subsTranscript && (
+                <div className="mt-3 rounded-lg border border-slate-200 p-4 text-sm">
+                  <p className="text-xs uppercase text-slate-500">Your transcript</p>
+                  <p className="mt-1 font-medium text-slate-800">{subsTranscript}</p>
+                </div>
+              )}
+
+              {subsFeedback && (
+                <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm">
+                  <p className="text-xs uppercase text-emerald-600">Agent feedback</p>
+                  <p className="mt-1 text-emerald-900">{subsFeedback}</p>
+                </div>
+              )}
+
+              {subsError && <p className="mt-2 text-sm text-red-600">{subsError}</p>}
+            </section>
+          )
+        }
+
+        {
+          activeModule === "reflex" && selectedFlow === "Expansion" && (
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-xl font-semibold">Expansion practice</h2>
+              <p className="text-sm text-slate-500">
+                Grow the idea with connectors and detail. Use the scaffolds as cues.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={fetchExpansionSet}
+                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  disabled={expLoading}
+                >
+                  {expLoading ? "Loading..." : "New seed"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => playText(expSeed)}
+                  className="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  disabled={!expSeed}
+                >
+                  Play seed
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExpHidden((prev) => !prev)}
+                  className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+                  disabled={!expSeed}
+                >
+                  {expHidden ? "Show text" : "Hide text"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (expRecording) stopExpRecording();
+                    else recordExpansion();
+                  }}
+                  className={`rounded-md px-4 py-2 text-sm font-medium text-white ${expRecording ? "bg-red-600" : "bg-green-600"
+                    }`}
+                  disabled={expLoading}
+                >
+                  {expRecording ? "Stop & transcribe" : "Record expansion"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    stopAudio();
+                    playText(stripMarkdown(expFeedback));
+                  }}
+                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  disabled={!expFeedback}
+                >
+                  Play feedback
+                </button>
+                <button
+                  type="button"
+                  onClick={stopAudio}
+                  className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-50"
+                  disabled={!expFeedback && audioQueue.length === 0 && !isPlaying}
+                >
+                  Stop playback
+                </button>
+              </div>
+
+              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                <p className="text-xs uppercase text-slate-500">Seed</p>
+                <p className={`mt-1 text-base font-medium ${expHidden ? "blur-sm" : ""}`}>
+                  {expSeed || "Click New seed to start expansion drills"}
+                </p>
+              </div>
+
+              {expScaffolds.length > 0 && (
+                <div className="mt-3 rounded-lg border border-slate-200 p-4 text-sm">
+                  <p className="text-xs uppercase text-slate-500">Scaffolds</p>
+                  <ul className="mt-2 list-disc pl-4 text-slate-700">
+                    {expScaffolds.map((s, i) => (
+                      <li key={`scaf-${i}`}>{s}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {expTranscript && (
+                <div className="mt-3 rounded-lg border border-slate-200 p-4 text-sm">
+                  <p className="text-xs uppercase text-slate-500">Your transcript</p>
+                  <p className="mt-1 font-medium text-slate-800">{expTranscript}</p>
+                </div>
+              )}
+
+              {expFeedback && (
+                <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm">
+                  <p className="text-xs uppercase text-emerald-600">Agent feedback</p>
+                  <p className="mt-1 text-emerald-900">{expFeedback}</p>
+                </div>
+              )}
+
+              {expError && <p className="mt-2 text-sm text-red-600">{expError}</p>}
+            </section>
+          )
+        }
+
+        {
+          activeModule === "deepdive" && selectedFlow === "Review" && (
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-xl font-semibold">Deep Dive · Review dialog</h2>
+              <p className="text-sm text-slate-500">
+                Agent opens, you respond (voice-first); Agent points one concrete error (word/tense/grammar/naturalness) if any, you correct; otherwise it continues. Conversation stays in English and shows roles plus corrections.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-3 text-sm">
+                <label className="flex items-center gap-2 text-slate-700">
+                  Patience
+                  <select
+                    value={patienceLevel}
+                    onChange={(e) => setPatienceLevel(e.target.value as any)}
+                    className="rounded-md border border-slate-300 px-2 py-1 text-sm"
+                  >
+                    <option value="low">Low (Fast)</option>
+                    <option value="medium">Medium (Standard)</option>
+                    <option value="high">High (Detailed)</option>
+                  </select>
+                </label>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={startReviewConversation}
+                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  disabled={reviewLoading}
+                >
+                  {reviewLoading ? "Loading..." : "Start dialog"}
+                </button>
+                <button
+                  type="button"
+                  onClick={endReviewDialog}
+                  className="rounded-md bg-slate-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  disabled={!reviewMessages.length}
+                >
+                  End dialog
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (reviewRecording) {
+                      stopReviewRecording();
+                    } else {
+                      recordReviewReply();
                     }
-                  );
-                  if (!res.ok) throw new Error(`Chat failed: ${res.status}`);
-                  const data = await res.json();
-                  setChatResponse(data.response ?? "");
-                } catch (err: any) {
-                  setChatResponse(err?.message ?? "Chat failed.");
-                }
-              }}
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-            >
-              Send
-            </button>
-          </div>
-          {chatResponse && (
-            <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-4 text-sm text-slate-700">
-              {chatResponse}
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold">10. Feedback</h2>
-          <p className="text-sm text-slate-500">
-            Send a transcript to /feedback for grammar/prosody suggestions.
-          </p>
-          <textarea
-            value={feedbackInput}
-            onChange={(e) => setFeedbackInput(e.target.value)}
-            placeholder="Paste transcript here..."
-            className="mt-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            rows={4}
-          />
-          <button
-            type="button"
-            onClick={async () => {
-              try {
-                const res = await fetch(`${API_BASE}/feedback`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    transcript: feedbackInput,
-                    segments: [],
-                    target_language: themeLanguage,
-                  }),
-                });
-                if (!res.ok) throw new Error(`Feedback failed: ${res.status}`);
-                const data = await res.json();
-                setFeedback(data);
-              } catch (err: any) {
-                setErrorMessage(err?.message ?? "Feedback failed.");
-              }
-            }}
-            className="mt-3 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white"
-          >
-            Get feedback
-          </button>
-          {feedback && (
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <div className="rounded-lg border border-slate-200 p-4 text-sm">
-                <p className="font-medium text-slate-800">Grammar</p>
-                <ul className="mt-2 list-disc pl-4 text-slate-600">
-                  {feedback.grammar_notes.map((g, i) => (
-                    <li key={`g-${i}`}>{g}</li>
-                  ))}
-                </ul>
+                  }}
+                  className={`rounded-md px-4 py-2 text-sm font-medium text-white ${reviewRecording ? "bg-red-600" : "bg-emerald-600"
+                    }`}
+                  disabled={reviewLoading}
+                >
+                  {reviewRecording ? "Stop & send" : "Record reply"}
+                </button>
               </div>
-              <div className="rounded-lg border border-slate-200 p-4 text-sm">
-                <p className="font-medium text-slate-800">Prosody</p>
-                <ul className="mt-2 list-disc pl-4 text-slate-600">
-                  {feedback.prosody_notes.map((p, i) => (
-                    <li key={`p-${i}`}>{p}</li>
-                  ))}
-                </ul>
-                {feedback.rerecord_targets.length > 0 && (
-                  <>
-                    <p className="mt-2 font-medium text-slate-800">
-                      Re-record
-                    </p>
-                    <ul className="mt-1 list-disc pl-4 text-slate-600">
-                      {feedback.rerecord_targets.map((r, i) => (
-                        <li key={`r-${i}`}>{r}</li>
-                      ))}
-                    </ul>
-                  </>
-                )}
+              <div className="mt-4 flex w-full flex-col gap-3">
+                <div className="flex flex-col gap-3 md:flex-row">
+                  <input
+                    value={reviewTextReply}
+                    onChange={(e) => setReviewTextReply(e.target.value)}
+                    placeholder="Type your reply here..."
+                    className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    disabled={reviewLoading || !reviewMessages.length}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => sendReviewTurn(reviewTextReply)}
+                    className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                    disabled={
+                      reviewLoading || !reviewMessages.length || !reviewTextReply.trim()
+                    }
+                  >
+                    Send text
+                  </button>
+                </div>
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={autoPlayReviewReply}
+                    onChange={(e) => setAutoPlayReviewReply(e.target.checked)}
+                  />
+                  Auto-play agent replies
+                </label>
               </div>
-            </div>
-          )}
-        </section>
 
-      </main>
-    </div>
+              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800">
+                <p className="text-xs uppercase text-slate-500">Transcript</p>
+                <div className="mt-2 flex min-h-[120px] flex-col gap-1">
+                  {reviewMessages.length === 0 && (
+                    <p className="text-slate-500">Click Start dialog to begin.</p>
+                  )}
+                  {reviewMessages.map((m, idx) => (
+                    <div key={`rev-${idx}`} className="leading-relaxed">
+                      <span className="font-semibold text-slate-700">
+                        {m.role === "agent" ? "Agent" : "User"}:
+                      </span>{" "}
+                      {m.text}
+                    </div>
+                  ))}
+                </div>
+                {reviewError && <p className="mt-2 text-sm text-red-600">{reviewError}</p>}
+              </div>
+            </section>
+          )
+        }
+
+        {/* Deep Dive Placeholders for Socratic and Retell */}
+        {
+          activeModule === "deepdive" && (selectedFlow === "Socratic" || selectedFlow === "Retell") && (
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-xl font-semibold">{selectedFlow} Practice</h2>
+              <div className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-slate-500">
+                <p className="text-lg font-medium">Developing...</p>
+                <p className="mt-2 text-sm">This practice mode is currently under construction.</p>
+              </div>
+            </section>
+          )
+        }
+
+        {
+          activeModule === "mindset" && selectedFlow && (
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-xl font-semibold">Mindset Gym · {selectedFlow}</h2>
+              <div className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-slate-500">
+                <p className="text-lg font-medium">Developing...</p>
+                <p className="mt-2 text-sm">This gym is currently under construction.</p>
+              </div>
+            </section>
+          )
+        }
+      </main >
+    </div >
   );
 }
+
+

@@ -262,6 +262,7 @@ class ReviewTurnRequest(BaseModel):
     user_reply: str
     attempt: int = Field(1, ge=1, description="1 for first try on current agent line")
     model: Optional[str] = None
+    patience: str = Field("medium", description="low, medium, or high")
     options: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -500,8 +501,8 @@ async def resolve_theme(req: ThemeRequest) -> ThemeResponse:
         )
     else:
         intent_prompt = (
-            "Summarize the learning intent in English in one sentence and provide a context "
-            f"or persona for practice: {req.theme}"
+            "Summarize the learning intent in English in one concise sentence. "
+            f"Input: {req.theme}"
         )
 
     try:
@@ -518,12 +519,11 @@ async def resolve_theme(req: ThemeRequest) -> ThemeResponse:
         "\"phrase\": \"natural spoken line, 6-12 words, no numbering, no the word 'phrase'\", "
         "\"translation\": \"omit this field\", "
         "\"cue\": \"specific delivery hint like 'slow and polite', 'warm and upbeat', 'brisk and concise' (avoid generic 'context hint')\"} ...]}. "
-        "Keep the scenario aligned to the given theme and make each phrase distinct. "
-        "Avoid food/drink ordering or coffee requests unless the theme explicitly demands it. "
-        "Do not output anchors about buying/making/ordering coffee or drinks; focus on conversational moves only. "
-        "Spread across different social moves (greeting, quick status, offer help, ask opinion, share update) so anchors do not repeat the same intent. "
+        "Keep the scenario strictly aligned to the given theme. "
+        "If the theme involves a specific transaction (e.g., ordering food), include relevant phrases. "
+        "Otherwise, focus on general conversational moves (greeting, quick status, offer help, ask opinion, share update) appropriate for the context. "
         f"Theme: {intent_text}. Language: en. Provide {req.count} anchors with varied difficulty. "
-        "Example anchors (adapt to the theme, not necessarily coffee): "
+        "Example anchors (adapt to the theme): "
         "{\"difficulty\": \"easy\", \"phrase\": \"Need a quick update before the meeting\", \"cue\": \"calm and clear\"}, "
         "{\"difficulty\": \"hard\", \"phrase\": \"Could you summarize yesterday's decisions quickly?\", \"cue\": \"brisk and concise\"}"
     )
@@ -930,11 +930,33 @@ async def review_turn(req: ReviewTurnRequest) -> ReviewTurnReply:
     latest = req.user_reply.strip()
     logger.info("review_turn user_reply: %s | attempt: %s", latest, req.attempt)
 
-    system_prompt = (
+    system_prompt_base = (
         "You are a English teacher who teach oral English to a user in the form of dialog. "
-        "You will pick a topic and begin the conversion. If user's reply has some issue, point one issue a time, explain the issue to the user, ask the user to reply again. "
-        "If the user's reply keeps failed, you'll prompt the user the correct reply. Once the user reply correctly, you'll move on to the next round of the dialog without any comment. "
-        "Keep you reply as brief as possible. Only provide brief explanation of the issue and give a suggestion. Or, just move on to next round. Do not praise user. Exchange words naturally."
+        "You will pick a topic and begin the conversion. "
+    )
+    
+    patience = req.patience.lower()
+    if patience == "low":
+        instruction = (
+            "If user's reply has some issue, briefly point it out, provide the correct form immediately, and move on to the next round of dialog. "
+            "Do NOT ask the user to retry. "
+        )
+    elif patience == "high":
+        instruction = (
+            "If user's reply has some issue, be patient. Explain the mistake in detail and ask the user to retry. "
+            "Continue to guide them until they get it right. "
+        )
+    else:  # medium (default)
+        instruction = (
+            "If user's reply has some issue, point one issue a time, explain the issue to the user, ask the user to reply again. "
+            "If the user's reply keeps failed, you'll prompt the user the correct reply. Once the user reply correctly, you'll move on to the next round of the dialog without any comment. "
+        )
+
+    system_prompt = (
+        f"{system_prompt_base}{instruction}"
+        "Keep you reply as brief as possible. Only provide a very short explanation of the issue and give one suggestion when there is a noticeable problem. "
+        "If the user's reply is acceptable or only mildly imperfect, do NOT critique— simply continue the dialog with the next question or follow-up. "
+        "Do not praise the user, avoid meta comments, and exchange words naturally."
     )
     prompt = (
         f"{system_prompt}\n\n"
